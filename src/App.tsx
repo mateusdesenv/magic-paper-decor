@@ -1,26 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 
 type Product = {
-  id: number;
+  _id: string;
   name: string;
   category: string;
   price: number;
   image: string;
   tag?: string;
+  type: "produto" | "serviço";
+  active: boolean;
 };
 
-const defaultProducts: Product[] = [
-  { id: 1, name: "Kit Festa Jardim Encantado", category: "Kits festa", price: 189.9, image: "https://images.unsplash.com/photo-1578922864601-79dcc7cbcea9?auto=format&fit=crop&w=900&q=85", tag: "Mais pedido" },
-  { id: 2, name: "Topo de Bolo Personalizado", category: "Papelaria", price: 42.9, image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=900&q=85", tag: "Personalizável" },
-  { id: 3, name: "Caixa Milk • 10 unidades", category: "Papelaria", price: 69.9, image: "https://images.unsplash.com/photo-1607344645866-009c320b63e0?auto=format&fit=crop&w=900&q=85" },
-  { id: 4, name: "Arco de Balões Orgânico", category: "Balões", price: 249.9, image: "https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=900&q=85", tag: "Sob medida" },
-  { id: 5, name: "Kit Lembrancinhas Luxo", category: "Kits festa", price: 149.9, image: "https://images.unsplash.com/photo-1549465220-1a8b9238cd48?auto=format&fit=crop&w=900&q=85" },
-  { id: 6, name: "Convite Digital Animado", category: "Convites", price: 39.9, image: "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=900&q=85", tag: "Entrega rápida" },
-  { id: 7, name: "Balão Bubble Personalizado", category: "Balões", price: 79.9, image: "https://images.unsplash.com/photo-1507501336603-6e31db2be093?auto=format&fit=crop&w=900&q=85" },
-  { id: 8, name: "Caixa Pirâmide • 10 unidades", category: "Papelaria", price: 74.9, image: "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=900&q=85" },
-];
-
-const defaultCategories = ["Todos", "Kits festa", "Papelaria", "Balões", "Convites"];
 const categoryMeta: Record<string, { icon: string; color: string }> = {
   Todos: { icon: "✦", color: "yellow" },
   "Kits festa": { icon: "🎉", color: "pink" },
@@ -28,56 +18,39 @@ const categoryMeta: Record<string, { icon: string; color: string }> = {
   Balões: { icon: "🎈", color: "mint" },
   Convites: { icon: "✉️", color: "lavender" },
 };
-const STORAGE_KEY = "magic-paper-decor:data";
-type LocalData = { version: 1; products: Product[]; categories: string[]; cart: Record<number, number> };
 const money = (value: number) => value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-export default function Home() {
-  const [products, setProducts] = useState<Product[]>(defaultProducts);
-  const [categories, setCategories] = useState<string[]>(defaultCategories);
+function Catalog() {
+  const [products, setProducts] = useState<Product[]>([]);
   const [category, setCategory] = useState("Todos");
   const [search, setSearch] = useState("");
-  const [cart, setCart] = useState<Record<number, number>>({});
+  const [cart, setCart] = useState<Record<string, number>>({});
   const [cartOpen, setCartOpen] = useState(false);
-  const [storageReady, setStorageReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved) as Partial<LocalData>;
-        if (Array.isArray(data.products) && data.products.length) setProducts(data.products);
-        if (Array.isArray(data.categories) && data.categories.length) setCategories(data.categories);
-        if (data.cart && typeof data.cart === "object") setCart(data.cart);
-      } else {
-        const legacyCart = window.localStorage.getItem("magic-cart");
-        if (legacyCart) setCart(JSON.parse(legacyCart));
-      }
-    } catch {
-      setProducts(defaultProducts);
-      setCategories(defaultCategories);
-      setCart({});
-    } finally {
-      setStorageReady(true);
-    }
+    fetch("/api/products")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Não foi possível carregar o catálogo.");
+        return response.json() as Promise<Product[]>;
+      })
+      .then(setProducts)
+      .catch((reason: Error) => setError(reason.message))
+      .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (!storageReady) return;
-    const data: LocalData = { version: 1, products, categories, cart };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    window.localStorage.removeItem("magic-cart");
-  }, [products, categories, cart, storageReady]);
+  const categories = useMemo(() => ["Todos", ...Array.from(new Set(products.map((product) => product.category)))], [products]);
 
   const filtered = useMemo(() => products.filter((product) =>
     (category === "Todos" || product.category === category) &&
     product.name.toLowerCase().includes(search.trim().toLowerCase())
   ), [products, category, search]);
   const count = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
-  const total = products.reduce((sum, product) => sum + (cart[product.id] || 0) * product.price, 0);
-  const items = products.filter((product) => cart[product.id]);
+  const total = products.reduce((sum, product) => sum + (cart[product._id] || 0) * product.price, 0);
+  const items = products.filter((product) => cart[product._id]);
 
-  const updateCart = (id: number, delta: number) => {
+  const updateCart = (id: string, delta: number) => {
     setCart((current) => {
       const next = Math.max(0, (current[id] || 0) + delta);
       const updated = { ...current, [id]: next };
@@ -87,7 +60,7 @@ export default function Home() {
   };
 
   const sendOrder = () => {
-    const lines = items.map((product) => `• ${cart[product.id]}x ${product.name} — ${money(product.price * cart[product.id])}`);
+    const lines = items.map((product) => `• ${cart[product._id]}x ${product.name} — ${money(product.price * cart[product._id])}`);
     const message = ["Olá, Magic Paper Decor! ✨", "Gostaria de solicitar este orçamento:", "", ...lines, "", `Total estimado: ${money(total)}`, "", "Podemos conversar sobre tema, personalização e prazo?"].join("\n");
     window.open(`https://wa.me/5554999999999?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   };
@@ -161,9 +134,11 @@ export default function Home() {
             <span className="sort-label">Ordenar: <b>Mais populares</b>⌄</span>
           </div>
 
-          <div className="product-grid">
+          {loading && <div className="catalog-state">Carregando catálogo…</div>}
+          {error && <div className="catalog-state error">{error}<button onClick={() => window.location.reload()}>Tentar novamente</button></div>}
+          {!loading && !error && <div className="product-grid">
             {filtered.map((product) => (
-              <article className="product-card" key={product.id}>
+              <article className="product-card" key={product._id}>
                 <div className="product-image">
                   <img src={product.image} alt={product.name} loading="lazy" />
                   {product.tag && <span className="tag">{product.tag}</span>}
@@ -174,18 +149,18 @@ export default function Home() {
                   <h3>{product.name}</h3>
                   <div className="price-row">
                     <div><span>A partir de</span><strong>{money(product.price)}</strong></div>
-                    {cart[product.id] ? (
+                    {cart[product._id] ? (
                       <div className="stepper" aria-label={`Quantidade de ${product.name}`}>
-                        <button onClick={() => updateCart(product.id, -1)} aria-label="Diminuir quantidade">−</button>
-                        <b>{cart[product.id]}</b>
-                        <button onClick={() => updateCart(product.id, 1)} aria-label="Aumentar quantidade">+</button>
+                        <button onClick={() => updateCart(product._id, -1)} aria-label="Diminuir quantidade">−</button>
+                        <b>{cart[product._id]}</b>
+                        <button onClick={() => updateCart(product._id, 1)} aria-label="Aumentar quantidade">+</button>
                       </div>
-                    ) : <button className="add" onClick={() => updateCart(product.id, 1)}>Adicionar <span>＋</span></button>}
+                    ) : <button className="add" onClick={() => updateCart(product._id, 1)}>Adicionar <span>＋</span></button>}
                   </div>
                 </div>
               </article>
             ))}
-          </div>
+          </div>}
           {!filtered.length && <div className="empty"><span>⌕</span><h3>Nenhum produto encontrado</h3><p>Tente buscar outro nome ou escolher uma categoria.</p></div>}
         </div>
       </section>
@@ -202,10 +177,10 @@ export default function Home() {
           <div className="cart-header"><div><span>SEU PEDIDO</span><h2>Minha sacola</h2></div><button onClick={() => setCartOpen(false)} aria-label="Fechar carrinho">×</button></div>
           {!items.length ? <div className="cart-empty"><span>🛍️</span><h3>Sua sacola está vazia</h3><p>Adicione os produtos que deseja pedir.</p><button className="primary" onClick={() => setCartOpen(false)}>Ver produtos</button></div> :
           <>
-            <div className="cart-items">{items.map((product) => <div className="cart-item" key={product.id}>
+            <div className="cart-items">{items.map((product) => <div className="cart-item" key={product._id}>
               <img src={product.image} alt="" />
               <div><small>{product.category}</small><strong>{product.name}</strong><span>{money(product.price)}</span></div>
-              <div className="stepper"><button onClick={() => updateCart(product.id, -1)}>−</button><b>{cart[product.id]}</b><button onClick={() => updateCart(product.id, 1)}>+</button></div>
+              <div className="stepper"><button onClick={() => updateCart(product._id, -1)}>−</button><b>{cart[product._id]}</b><button onClick={() => updateCart(product._id, 1)}>+</button></div>
             </div>)}</div>
             <div className="cart-footer"><div><span>Total estimado</span><strong>{money(total)}</strong></div><p>O valor final pode variar conforme a personalização.</p><button className="whatsapp" onClick={sendOrder}>◉ Enviar pedido pelo WhatsApp</button></div>
           </>}
@@ -213,4 +188,141 @@ export default function Home() {
       </div>}
     </main>
   );
+}
+
+type FormState = { name: string; category: string; price: string; image: string; tag: string; type: "produto" | "serviço"; active: boolean };
+const emptyForm: FormState = { name: "", category: "", price: "", image: "", tag: "", type: "produto", active: true };
+let adminAccessGranted = false;
+
+function AdminLogin({ onLogin }: { onLogin: () => void }) {
+  return <main className="admin-login">
+    <div className="login-card">
+      <div className="brand"><span className="brand-mark"><i /><i /><i /></span><span><strong>Magic</strong><small>Paper Decor</small></span></div>
+      <span className="admin-kicker">ÁREA ADMINISTRATIVA</span>
+      <h1>Bem-vinda de volta</h1>
+      <p>Entre para gerenciar os produtos e serviços do catálogo.</p>
+      <label>E-mail<input type="email" placeholder="seu@email.com" /></label>
+      <label>Senha<input type="password" placeholder="••••••••" /></label>
+      <button onClick={onLogin}>Entrar no painel</button>
+      <small>A autenticação será ativada em uma próxima etapa.</small>
+    </div>
+  </main>;
+}
+
+function Admin() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const load = () => fetch("/api/products?all=true").then(async (response) => {
+    if (!response.ok) throw new Error("Falha ao carregar itens.");
+    setProducts(await response.json());
+  }).catch((error: Error) => setMessage(error.message));
+
+  useEffect(() => { void load(); }, []);
+
+  const startCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); setMessage(""); };
+  const startEdit = (product: Product) => {
+    setEditing(product._id);
+    setForm({ name: product.name, category: product.category, price: String(product.price), image: product.image, tag: product.tag || "", type: product.type, active: product.active });
+    setOpen(true);
+    setMessage("");
+  };
+  const handleImage = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setForm((current) => ({ ...current, image: String(reader.result) }));
+    reader.readAsDataURL(file);
+  };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!form.image) return setMessage("Selecione uma imagem.");
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(editing ? `/api/products/${editing}` : "/api/products", {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, price: Number(form.price) }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      setMessage(data.message || "Não foi possível salvar.");
+    } else {
+      setOpen(false);
+      await load();
+    }
+    setBusy(false);
+  };
+  const remove = async (product: Product) => {
+    if (!window.confirm(`Excluir “${product.name}”?`)) return;
+    const response = await fetch(`/api/products/${product._id}`, { method: "DELETE" });
+    if (response.ok) await load(); else setMessage("Não foi possível excluir.");
+  };
+
+  return <main className="admin-page">
+    <aside className="admin-nav">
+      <div className="brand light"><span className="brand-mark"><i /><i /><i /></span><span><strong>Magic</strong><small>Paper Decor</small></span></div>
+      <nav><b>▦ Produtos e serviços</b></nav>
+      <a href="/" target="_blank">Ver catálogo ↗</a>
+    </aside>
+    <section className="admin-main">
+      <header><div><span className="admin-kicker">GESTÃO DO CATÁLOGO</span><h1>Produtos e serviços</h1><p>Cadastre e atualize os itens exibidos no catálogo.</p></div><button onClick={startCreate}>＋ Novo item</button></header>
+      <div className="admin-stats">
+        <div><span>Total de itens</span><b>{products.length}</b></div>
+        <div><span>Produtos ativos</span><b>{products.filter((item) => item.active && item.type === "produto").length}</b></div>
+        <div><span>Serviços ativos</span><b>{products.filter((item) => item.active && item.type === "serviço").length}</b></div>
+      </div>
+      {message && <div className="admin-message">{message}</div>}
+      <div className="admin-table-wrap"><table className="admin-table">
+        <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>{products.map((product) => <tr key={product._id}>
+          <td><div className="admin-product"><img src={product.image} alt="" /><div><b>{product.name}</b><small>{product.tag || "Sem destaque"}</small></div></div></td>
+          <td>{product.type}</td><td>{product.category}</td><td>{money(product.price)}</td>
+          <td><span className={product.active ? "status-active" : "status-inactive"}>{product.active ? "Ativo" : "Inativo"}</span></td>
+          <td><div className="table-actions"><button onClick={() => startEdit(product)}>Editar</button><button className="delete" onClick={() => remove(product)}>Excluir</button></div></td>
+        </tr>)}</tbody>
+      </table></div>
+    </section>
+    {open && <div className="admin-modal" onMouseDown={() => setOpen(false)}><form onSubmit={save} onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><span className="admin-kicker">{editing ? "EDITAR ITEM" : "NOVO ITEM"}</span><h2>{editing ? "Atualizar cadastro" : "Cadastrar produto ou serviço"}</h2></div><button type="button" onClick={() => setOpen(false)}>×</button></header>
+      <div className="form-grid">
+        <label className="full">Nome<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+        <label>Tipo<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as FormState["type"] })}><option value="produto">Produto</option><option value="serviço">Serviço</option></select></label>
+        <label>Categoria<input required value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label>
+        <label>Preço<input required min="0" step="0.01" type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
+        <label>Destaque<input value={form.tag} placeholder="Ex.: Mais pedido" onChange={(event) => setForm({ ...form, tag: event.target.value })} /></label>
+        <label className="full image-field">Imagem<input accept="image/*" type="file" onChange={(event) => handleImage(event.target.files?.[0])} /><span>{form.image ? "Imagem pronta em base64 ✓" : "Escolher imagem"}</span></label>
+        {form.image && <img className="image-preview" src={form.image} alt="Prévia" />}
+        <label className="check full"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} /> Exibir este item no catálogo</label>
+      </div>
+      {message && <div className="admin-message">{message}</div>}
+      <footer><button type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="save" disabled={busy}>{busy ? "Salvando…" : "Salvar item"}</button></footer>
+    </form></div>}
+  </main>;
+}
+
+export default function App() {
+  const [path, setPath] = useState(window.location.pathname);
+  useEffect(() => {
+    const handler = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+  if (path === "/admin/login") return <AdminLogin onLogin={() => {
+    adminAccessGranted = true;
+    window.history.pushState({}, "", "/admin");
+    setPath("/admin");
+  }} />;
+  if (path === "/admin") {
+    if (!adminAccessGranted) {
+      window.history.replaceState({}, "", "/admin/login");
+      queueMicrotask(() => setPath("/admin/login"));
+      return null;
+    }
+    return <Admin />;
+  }
+  return <Catalog />;
 }
