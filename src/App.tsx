@@ -193,6 +193,8 @@ function Catalog() {
 }
 
 type FormState = { name: string; category: string; price: string; image: string; tag: string; type: "produto" | "serviço"; active: boolean };
+type Collaborator = { _id: string; uid: string; email: string; name?: string; photo?: string; status: "pending" | "approved" | "blocked"; createdAt: string };
+type AccessState = { status: "checking" | "pending" | "approved" | "blocked"; owner: boolean };
 const emptyForm: FormState = { name: "", category: "", price: "", image: "", tag: "", type: "produto", active: true };
 function AdminLogin({ user, onLogin }: { user: User | null; onLogin: () => void }) {
   const [error, setError] = useState("");
@@ -216,8 +218,21 @@ function AdminLogin({ user, onLogin }: { user: User | null; onLogin: () => void 
   </main>;
 }
 
-function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
+function AccessWaiting({ user, status, onLogout }: { user: User; status: "pending" | "blocked"; onLogout: () => void }) {
+  return <main className="admin-login"><div className="login-card access-card">
+    <div className="access-icon">{status === "pending" ? "⌛" : "⊘"}</div>
+    <span className="admin-kicker">{status === "pending" ? "SOLICITAÇÃO ENVIADA" : "ACESSO BLOQUEADO"}</span>
+    <h1>{status === "pending" ? "Aguardando liberação" : "Acesso não autorizado"}</h1>
+    <p>{status === "pending" ? "Um administrador precisa aprovar sua conta antes que você possa acessar o painel." : "Seu acesso ao painel foi bloqueado. Entre em contato com um administrador."}</p>
+    <div className="request-user">{user.photoURL && <img src={user.photoURL} alt="" />}<div><b>{user.displayName}</b><span>{user.email}</span></div></div>
+    <button onClick={onLogout}>Sair desta conta</button>
+  </div></main>;
+}
+
+function Admin({ user, owner, onLogout }: { user: User; owner: boolean; onLogout: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [view, setView] = useState<"products" | "collaborators">("products");
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -234,6 +249,20 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
   }).catch((error: Error) => setMessage(error.message));
 
   useEffect(() => { void load(); }, []);
+  const loadCollaborators = () => authenticatedFetch("/api/collaborators").then(async (response) => {
+    if (!response.ok) throw new Error("Falha ao carregar colaboradores.");
+    setCollaborators(await response.json());
+  }).catch((error: Error) => setMessage(error.message));
+  const openCollaborators = () => { setView("collaborators"); setMessage(""); void loadCollaborators(); };
+  const changeAccess = async (id: string, status: Collaborator["status"]) => {
+    const response = await authenticatedFetch(`/api/collaborators?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (response.ok) await loadCollaborators(); else setMessage("Não foi possível atualizar o acesso.");
+  };
+  const deleteCollaborator = async (id: string) => {
+    if (!window.confirm("Remover esta solicitação e todo o acesso deste usuário?")) return;
+    const response = await authenticatedFetch(`/api/collaborators?id=${id}`, { method: "DELETE" });
+    if (response.ok) await loadCollaborators(); else setMessage("Não foi possível remover o colaborador.");
+  };
 
   const startCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); setMessage(""); };
   const startEdit = (product: Product) => {
@@ -276,11 +305,14 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
   return <main className="admin-page">
     <aside className="admin-nav">
       <div className="brand light"><span className="brand-mark"><i /><i /><i /></span><span><strong>Magic</strong><small>Paper Decor</small></span></div>
-      <nav><b>▦ Produtos e serviços</b></nav>
+      <nav className="admin-menu">
+        <button className={view === "products" ? "active" : ""} onClick={() => setView("products")}>▦ Produtos e serviços</button>
+        {owner && <button className={view === "collaborators" ? "active" : ""} onClick={openCollaborators}>♙ Colaboradores {collaborators.filter((item) => item.status === "pending").length > 0 && <em>{collaborators.filter((item) => item.status === "pending").length}</em>}</button>}
+      </nav>
       <div className="admin-user">{user.photoURL && <img src={user.photoURL} alt="" />}<span>{user.displayName || user.email}</span><button onClick={onLogout}>Sair</button></div>
       <a href="/" target="_blank">Ver catálogo ↗</a>
     </aside>
-    <section className="admin-main">
+    {view === "products" ? <section className="admin-main">
       <header><div><span className="admin-kicker">GESTÃO DO CATÁLOGO</span><h1>Produtos e serviços</h1><p>Cadastre e atualize os itens exibidos no catálogo.</p></div><button onClick={startCreate}>＋ Novo item</button></header>
       <div className="admin-stats">
         <div><span>Total de itens</span><b>{products.length}</b></div>
@@ -297,7 +329,29 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
           <td><div className="table-actions"><button onClick={() => startEdit(product)}>Editar</button><button className="delete" onClick={() => remove(product)}>Excluir</button></div></td>
         </tr>)}</tbody>
       </table></div>
-    </section>
+    </section> : <section className="admin-main">
+      <header><div><span className="admin-kicker">EQUIPE E PERMISSÕES</span><h1>Colaboradores</h1><p>Aprove solicitações e controle quem pode gerenciar o catálogo.</p></div></header>
+      <div className="admin-stats">
+        <div><span>Solicitações pendentes</span><b>{collaborators.filter((item) => item.status === "pending").length}</b></div>
+        <div><span>Com acesso</span><b>{collaborators.filter((item) => item.status === "approved").length + 2}</b></div>
+        <div><span>Bloqueados</span><b>{collaborators.filter((item) => item.status === "blocked").length}</b></div>
+      </div>
+      {message && <div className="admin-message">{message}</div>}
+      <div className="admin-table-wrap"><table className="admin-table collaborators-table">
+        <thead><tr><th>Colaborador</th><th>Solicitado em</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>{collaborators.map((item) => <tr key={item._id}>
+          <td><div className="admin-product">{item.photo ? <img src={item.photo} alt="" /> : <span className="user-placeholder">{item.email[0]?.toUpperCase()}</span>}<div><b>{item.name || "Usuário Google"}</b><small>{item.email}</small></div></div></td>
+          <td>{new Date(item.createdAt).toLocaleDateString("pt-BR")}</td>
+          <td><span className={`access-${item.status}`}>{item.status === "pending" ? "Pendente" : item.status === "approved" ? "Liberado" : "Bloqueado"}</span></td>
+          <td><div className="table-actions">
+            {item.status !== "approved" && <button onClick={() => changeAccess(item._id, "approved")}>Liberar</button>}
+            {item.status !== "blocked" && <button onClick={() => changeAccess(item._id, "blocked")}>Bloquear</button>}
+            <button className="delete" onClick={() => deleteCollaborator(item._id)}>Remover</button>
+          </div></td>
+        </tr>)}</tbody>
+      </table></div>
+      {!collaborators.length && <div className="no-requests">Nenhuma solicitação de acesso recebida.</div>}
+    </section>}
     {open && <div className="admin-modal" onMouseDown={() => setOpen(false)}><form onSubmit={save} onMouseDown={(event) => event.stopPropagation()}>
       <header><div><span className="admin-kicker">{editing ? "EDITAR ITEM" : "NOVO ITEM"}</span><h2>{editing ? "Atualizar cadastro" : "Cadastrar produto ou serviço"}</h2></div><button type="button" onClick={() => setOpen(false)}>×</button></header>
       <div className="form-grid">
@@ -320,17 +374,35 @@ export default function App() {
   const [path, setPath] = useState(window.location.pathname);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [access, setAccess] = useState<AccessState>({ status: "checking", owner: false });
   useEffect(() => {
     const handler = () => setPath(window.location.pathname);
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
   }, []);
-  useEffect(() => onAuthStateChanged(auth, (current) => { setUser(current); setAuthReady(true); }), []);
+  useEffect(() => onAuthStateChanged(auth, async (current) => {
+    setUser(current);
+    if (!current) {
+      setAccess({ status: "checking", owner: false });
+      setAuthReady(true);
+      return;
+    }
+    try {
+      const token = await current.getIdToken();
+      const response = await fetch("/api/access-status", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await response.json();
+      setAccess({ status: data.status || "blocked", owner: Boolean(data.owner) });
+    } catch {
+      setAccess({ status: "blocked", owner: false });
+    } finally {
+      setAuthReady(true);
+    }
+  }), []);
   const goAdmin = () => {
     window.history.pushState({}, "", "/admin");
     setPath("/admin");
   };
-  if (path.startsWith("/admin") && !authReady) return <main className="auth-loading">Verificando acesso…</main>;
+  if (path.startsWith("/admin") && (!authReady || (user && access.status === "checking"))) return <main className="auth-loading">Verificando acesso…</main>;
   if (path === "/admin/login") {
     if (user) { queueMicrotask(goAdmin); return null; }
     return <AdminLogin user={user} onLogin={goAdmin} />;
@@ -341,7 +413,9 @@ export default function App() {
       queueMicrotask(() => setPath("/admin/login"));
       return null;
     }
-    return <Admin user={user} onLogout={async () => { await signOut(auth); window.history.pushState({}, "", "/admin/login"); setPath("/admin/login"); }} />;
+    const logout = async () => { await signOut(auth); window.history.pushState({}, "", "/admin/login"); setPath("/admin/login"); };
+    if (access.status === "pending" || access.status === "blocked") return <AccessWaiting user={user} status={access.status} onLogout={logout} />;
+    return <Admin user={user} owner={access.owner} onLogout={logout} />;
   }
   return <Catalog />;
 }
