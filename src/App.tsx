@@ -228,7 +228,7 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
     const token = await user.getIdToken();
     return fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } });
   };
-  const load = () => authenticatedFetch("/api/admin/products").then(async (response) => {
+  const load = () => authenticatedFetch("/api/admin-products").then(async (response) => {
     if (!response.ok) throw new Error("Falha ao carregar itens.");
     setProducts(await response.json());
   }).catch((error: Error) => setMessage(error.message));

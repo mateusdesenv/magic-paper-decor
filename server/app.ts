@@ -20,7 +20,7 @@ app.get("/api/products", async (req, res) => {
   res.json(products);
 });
 
-app.get("/api/admin/products", requireAuth, async (_req, res) => {
+app.get("/api/admin-products", requireAuth, async (_req, res) => {
   await connectDatabase();
   const products = await Product.find({}).sort({ createdAt: 1 }).lean();
   res.json(products);
