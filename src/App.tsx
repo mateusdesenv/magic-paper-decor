@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
+import { auth, googleProvider } from "./firebase";
 
 type Product = {
   _id: string;
@@ -192,24 +194,29 @@ function Catalog() {
 
 type FormState = { name: string; category: string; price: string; image: string; tag: string; type: "produto" | "serviço"; active: boolean };
 const emptyForm: FormState = { name: "", category: "", price: "", image: "", tag: "", type: "produto", active: true };
-let adminAccessGranted = false;
-
-function AdminLogin({ onLogin }: { onLogin: () => void }) {
+function AdminLogin({ user, onLogin }: { user: User | null; onLogin: () => void }) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const login = async () => {
+    setBusy(true); setError("");
+    try { await signInWithPopup(auth, googleProvider); onLogin(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível entrar com o Google."); }
+    finally { setBusy(false); }
+  };
   return <main className="admin-login">
     <div className="login-card">
       <div className="brand"><span className="brand-mark"><i /><i /><i /></span><span><strong>Magic</strong><small>Paper Decor</small></span></div>
       <span className="admin-kicker">ÁREA ADMINISTRATIVA</span>
       <h1>Bem-vinda de volta</h1>
-      <p>Entre para gerenciar os produtos e serviços do catálogo.</p>
-      <label>E-mail<input type="email" placeholder="seu@email.com" /></label>
-      <label>Senha<input type="password" placeholder="••••••••" /></label>
-      <button onClick={onLogin}>Entrar no painel</button>
-      <small>A autenticação será ativada em uma próxima etapa.</small>
+      <p>Use sua conta Google para gerenciar os produtos e serviços do catálogo.</p>
+      {error && <div className="admin-message">{error}</div>}
+      <button className="google-login" onClick={login} disabled={busy}><span>G</span>{busy ? "Conectando…" : user ? "Continuar para o painel" : "Entrar com Google"}</button>
+      <small>Acesso protegido pelo Firebase Authentication.</small>
     </div>
   </main>;
 }
 
-function Admin() {
+function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<string | null>(null);
@@ -217,7 +224,11 @@ function Admin() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  const load = () => fetch("/api/products?all=true").then(async (response) => {
+  const authenticatedFetch = async (url: string, init: RequestInit = {}) => {
+    const token = await user.getIdToken();
+    return fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } });
+  };
+  const load = () => authenticatedFetch("/api/admin/products").then(async (response) => {
     if (!response.ok) throw new Error("Falha ao carregar itens.");
     setProducts(await response.json());
   }).catch((error: Error) => setMessage(error.message));
@@ -242,7 +253,7 @@ function Admin() {
     if (!form.image) return setMessage("Selecione uma imagem.");
     setBusy(true);
     setMessage("");
-    const response = await fetch(editing ? `/api/products/${editing}` : "/api/products", {
+    const response = await authenticatedFetch(editing ? `/api/products/${editing}` : "/api/products", {
       method: editing ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...form, price: Number(form.price) }),
@@ -258,7 +269,7 @@ function Admin() {
   };
   const remove = async (product: Product) => {
     if (!window.confirm(`Excluir “${product.name}”?`)) return;
-    const response = await fetch(`/api/products/${product._id}`, { method: "DELETE" });
+    const response = await authenticatedFetch(`/api/products/${product._id}`, { method: "DELETE" });
     if (response.ok) await load(); else setMessage("Não foi possível excluir.");
   };
 
@@ -266,6 +277,7 @@ function Admin() {
     <aside className="admin-nav">
       <div className="brand light"><span className="brand-mark"><i /><i /><i /></span><span><strong>Magic</strong><small>Paper Decor</small></span></div>
       <nav><b>▦ Produtos e serviços</b></nav>
+      <div className="admin-user">{user.photoURL && <img src={user.photoURL} alt="" />}<span>{user.displayName || user.email}</span><button onClick={onLogout}>Sair</button></div>
       <a href="/" target="_blank">Ver catálogo ↗</a>
     </aside>
     <section className="admin-main">
@@ -306,23 +318,30 @@ function Admin() {
 
 export default function App() {
   const [path, setPath] = useState(window.location.pathname);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   useEffect(() => {
     const handler = () => setPath(window.location.pathname);
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
   }, []);
-  if (path === "/admin/login") return <AdminLogin onLogin={() => {
-    adminAccessGranted = true;
+  useEffect(() => onAuthStateChanged(auth, (current) => { setUser(current); setAuthReady(true); }), []);
+  const goAdmin = () => {
     window.history.pushState({}, "", "/admin");
     setPath("/admin");
-  }} />;
+  };
+  if (path.startsWith("/admin") && !authReady) return <main className="auth-loading">Verificando acesso…</main>;
+  if (path === "/admin/login") {
+    if (user) { queueMicrotask(goAdmin); return null; }
+    return <AdminLogin user={user} onLogin={goAdmin} />;
+  }
   if (path === "/admin") {
-    if (!adminAccessGranted) {
+    if (!user) {
       window.history.replaceState({}, "", "/admin/login");
       queueMicrotask(() => setPath("/admin/login"));
       return null;
     }
-    return <Admin />;
+    return <Admin user={user} onLogout={async () => { await signOut(auth); window.history.pushState({}, "", "/admin/login"); setPath("/admin/login"); }} />;
   }
   return <Catalog />;
 }
